@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+    "StorageConnectionString": "UseDevelopmentStorage=true",
+    "TimeZoneOffset": "09:00:00",
+    "OffsetDays": 0,
+    "AzureWebJobs.SnapshotCollectorFunction.Disabled": false,
+    "AzureWebJobs.MakeDailyTimelapseFunction.Disabled": false
+  }
+}

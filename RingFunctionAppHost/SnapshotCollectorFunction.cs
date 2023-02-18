@@ -29,9 +29,9 @@ public class SnapshotCollectorFunction
         _logger = logger;
     }
 
-    [FunctionName("SnapshotCollectorFunction")]
+    [FunctionName(nameof(SnapshotCollectorFunction))]
     public async Task Run(
-        [TimerTrigger("0 0 15 * * *"
+        [TimerTrigger("0 15 15 * * *"
 #if DEBUG
         , RunOnStartup = true
 #endif
