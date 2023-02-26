@@ -60,7 +60,7 @@ public class MakeDailyTimelapseFunction
 
         var inputListFilePath = await DownloadSnapshotsAndMakeInputFileListAsync(tempDir, start, end, snapshotsBlobContainerClient);
 
-        var outputPath = GenerateTimelapse(tempDir, inputListFilePath);
+        var outputPath = await GenerateTimelapse(tempDir, inputListFilePath);
 
         await UploadTimelapseAsync(timelapsesBlobContainerClient, targetDate, outputPath);
 
@@ -104,7 +104,7 @@ public class MakeDailyTimelapseFunction
         return inputListFilePath;
     }
 
-    private string GenerateTimelapse(string tempDir, string inputListFilePath)
+    private async Task<string> GenerateTimelapse(string tempDir, string inputListFilePath)
     {
         var outputPath = Path.Combine(tempDir, "output.mp4");
         using var process = new Process();
@@ -118,8 +118,18 @@ public class MakeDailyTimelapseFunction
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        process.OutputDataReceived += (sender, e) =>
+        {
+            _logger.LogInformation("Output:{Message}", e.Data);
+        };
+        process.ErrorDataReceived += (sender, e) =>
+        {
+            _logger.LogInformation("Error:{Message}", e.Data);
+        };
         process.Start();
-        process.WaitForExit();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        await process.WaitForExitAsync();
         if (process.ExitCode != 0)
         {
             throw new Exception($"ffmpeg error. ExitCode:{process.ExitCode}");
