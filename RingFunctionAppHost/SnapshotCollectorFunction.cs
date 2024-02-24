@@ -14,26 +14,15 @@ using System.Threading.Tasks;
 
 namespace RingFunctionAppHost;
 
-public class SnapshotCollectorFunction
-{
-    private readonly RingSession _ringSession;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<SnapshotCollectorFunction> _logger;
-
-    public SnapshotCollectorFunction(RingSession ringSession
+public class SnapshotCollectorFunction(RingSession ringSession
         , HttpClient httpClient
         , ILogger<SnapshotCollectorFunction> logger)
-    {
-        _ringSession = ringSession;
-        _httpClient = httpClient;
-        _logger = logger;
-    }
-
+{
     [FunctionName(nameof(SnapshotCollectorFunction))]
     public async Task Run(
         [TimerTrigger("0 15 15 * * *"
 #if DEBUG
-        , RunOnStartup = true
+        , RunOnStartup = false
 #endif
         )] TimerInfo myTimer,
         [Blob("snapshots",FileAccess.Read,Connection = "StorageConnectionString")]
@@ -41,13 +30,13 @@ public class SnapshotCollectorFunction
         [Table("Configuration", Connection = "StorageConnectionString")] TableClient tableClient)
     {
         var config = await tableClient.GetEntityAsync<Config>(nameof(SnapshotCollectorFunction), nameof(Config));
-        await _ringSession.InitializeAsync(config.Value.RefreshToken);
+        await ringSession.InitializeAsync(config.Value.OAuthToken);
 
         try
         {
             var span = TimeSpan.FromHours(3);
 
-            List<OrchestratorTimelineResponse> responses = new();
+            List<OrchestratorTimelineResponse> responses = [];
             var currentDate = config.Value.LastCollectedDateTime;
 
             while (currentDate <= DateTimeOffset.UtcNow)
@@ -55,7 +44,7 @@ public class SnapshotCollectorFunction
                 OrchestratorTimelineResponse response = default!;
                 do
                 {
-                    response = await _ringSession.GetOrchestratorTimelineAsync(
+                    response = await ringSession.GetOrchestratorTimelineAsync(
                     config.Value.DoorbotId
                     , currentDate
                     , currentDate.Add(span)
@@ -80,7 +69,7 @@ public class SnapshotCollectorFunction
 
                     if (!await blobClient.ExistsAsync())
                     {
-                        using var fileStream = await _httpClient.GetStreamAsync(footage.url);
+                        using var fileStream = await httpClient.GetStreamAsync(footage.url);
                         await blobClient.UploadAsync(fileStream);
                     }
                 }
@@ -89,11 +78,11 @@ public class SnapshotCollectorFunction
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, nameof(Run));
+            logger.LogError(ex, nameof(Run));
         }
         finally
         {
-            config.Value.RefreshToken = _ringSession.CurrentRefreshToken;
+            config.Value.OAuthToken = ringSession.OAuthTokenString;
             await tableClient.UpdateEntityAsync(config.Value, ETag.All);
         }
     }
@@ -101,7 +90,7 @@ public class SnapshotCollectorFunction
     public class Config : ITableEntity
     {
         public int DoorbotId { get; set; }
-        public string RefreshToken { get; set; } = default!;
+        public string OAuthToken { get; set; } = default!;
         public DateTimeOffset LastCollectedDateTime { get; set; }
 
         public string PartitionKey { get; set; } = default!;

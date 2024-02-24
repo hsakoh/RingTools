@@ -2,6 +2,7 @@
 using RingFunctionAppHost.Models;
 using System;
 using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -10,26 +11,72 @@ using System.Web;
 
 namespace RingFunctionAppHost.Logics;
 
-public class RingSession
+public class RingSession(HttpClient httpClient, ILogger<RingSession> logger)
 {
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<RingSession> _logger;
-
     private OAuthToken OAuthToken { get; set; } = default!;
 
-    public RingSession(HttpClient httpClient, ILogger<RingSession> logger)
+    public async Task AuthenticationAsync(string userName, string password, string twoFactorAuthenticationCode)
     {
-        _httpClient = httpClient;
-        _logger = logger;
+        logger.LogInformation($"{nameof(AuthenticationAsync)} {{userName}}", userName);
+        try
+        {
+            using var request = new HttpRequestMessage
+            {
+                Method = HttpMethod.Post,
+                RequestUri = new Uri("https://oauth.ring.com/oauth/token"),
+                Content = new FormUrlEncodedContent(
+                    new Dictionary<string, string> {
+                        { "grant_type", "password" },
+                        { "username", userName },
+                        { "password", password },
+                        { "client_id", "ring_official_android" },
+                        { "scope", "client" }
+                    }
+                )
+            };
+            request.Headers.Add("2fa-support", "true");
+            request.Headers.Add("2fa-code", twoFactorAuthenticationCode);
+            using var response = await httpClient.SendAsync(request);
+            var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
+            logger.LogInformation($"{nameof(AuthenticationAsync)} {{ResponseText}}", responseText);
+            OAuthToken = JsonSerializer.Deserialize<OAuthToken>(responseText)!;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, $"{nameof(AuthenticationAsync)} {{userName}}", userName);
+            throw;
+        }
     }
-    public async Task InitializeAsync(string refreshToken)
+
+    public async Task<DevicesResponse> ListDevicesAsync()
     {
-        await RefreshSessionAsync(refreshToken);
+        logger.LogInformation($"{nameof(ListDevicesAsync)}");
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri("https://api.ring.com/clients_api/ring_devices"));
+            request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {OAuthToken.AccessToken}");
+            using var response = await httpClient.SendAsync(request);
+            var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
+            logger.LogInformation($"{nameof(ListDevicesAsync)} {{ResponseText}}", responseText);
+            return JsonSerializer.Deserialize<DevicesResponse>(responseText)!;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, $"{nameof(ListDevicesAsync)}");
+            throw;
+        }
+    }
+
+
+    public async Task InitializeAsync(string oauthToken)
+    {
+        OAuthToken = JsonSerializer.Deserialize<OAuthToken>(oauthToken)!;
+        await EnsureSessionValidAsync();
     }
 
     public async Task RefreshSessionAsync(string refreshToken)
     {
-        _logger.LogInformation($"{nameof(RefreshSessionAsync)} {{RefreshToken}}", refreshToken);
+        logger.LogInformation($"{nameof(RefreshSessionAsync)} {{RefreshToken}}", refreshToken);
         try
         {
             using var request = new HttpRequestMessage
@@ -43,20 +90,23 @@ public class RingSession
                     }
                 )
             };
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await httpClient.SendAsync(request);
             var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
-            _logger.LogInformation($"{nameof(RefreshSessionAsync)} {{ResponseText}}", responseText);
+            logger.LogInformation($"{nameof(RefreshSessionAsync)} {{ResponseText}}", responseText);
             OAuthToken = JsonSerializer.Deserialize<OAuthToken>(responseText)!;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"{nameof(RefreshSessionAsync)} {{RefreshToken}}", refreshToken);
+            logger.LogError(ex, $"{nameof(RefreshSessionAsync)} {{RefreshToken}}", refreshToken);
             throw;
         }
     }
+
     public async Task EnsureSessionValidAsync()
     {
-        if (OAuthToken.ExpiresAt < DateTime.UtcNow)
+        var handler = new JwtSecurityTokenHandler();
+        var jwtSecurityToken = handler.ReadJwtToken(OAuthToken.AccessToken);
+        if (jwtSecurityToken.ValidTo < DateTime.UtcNow)
         {
             await RefreshSessionAsync(OAuthToken.RefreshToken);
         }
@@ -65,7 +115,7 @@ public class RingSession
 
     public async Task<OrchestratorTimelineResponse> GetOrchestratorTimelineAsync(int doorbotId, DateTimeOffset startTime, DateTimeOffset endTime, bool? isOderByAsc = null, int? limit = null, string? paginationKey = null)
     {
-        _logger.LogInformation($"{nameof(GetOrchestratorTimelineAsync)} {{DoorbotId}},{{StartTime}},{{EndTime}}", doorbotId, startTime, endTime);
+        logger.LogInformation($"{nameof(GetOrchestratorTimelineAsync)} {{DoorbotId}},{{StartTime}},{{EndTime}}", doorbotId, startTime, endTime);
 
         try
         {
@@ -93,18 +143,18 @@ public class RingSession
 
             using var request = new HttpRequestMessage(HttpMethod.Get, uriBuilder.Uri);
             request.Headers.Add(HttpRequestHeader.Authorization.ToString(), $"Bearer {OAuthToken.AccessToken}");
-            using var response = await _httpClient.SendAsync(request);
+            using var response = await httpClient.SendAsync(request);
             var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
-            _logger.LogInformation($"{nameof(GetOrchestratorTimelineAsync)} {{ResponseText}}", responseText);
+            logger.LogInformation($"{nameof(GetOrchestratorTimelineAsync)} {{ResponseText}}", responseText);
             var orchestratorTimeline = JsonSerializer.Deserialize<OrchestratorTimelineResponse>(responseText);
             return orchestratorTimeline!;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"{nameof(GetOrchestratorTimelineAsync)}");
+            logger.LogError(ex, $"{nameof(GetOrchestratorTimelineAsync)}");
             throw;
         }
     }
 
-    public string CurrentRefreshToken { get => OAuthToken.RefreshToken; }
+    public string OAuthTokenString { get => JsonSerializer.Serialize(OAuthToken); }
 }

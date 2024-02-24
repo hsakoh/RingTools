@@ -16,29 +16,20 @@ using System.Threading.Tasks;
 
 namespace RingFunctionAppHost;
 
-public class MakeDailyTimelapseFunction
-{
-    private readonly ILogger<MakeDailyTimelapseFunction> _logger;
-    private readonly string ffmpgPath;
-    private readonly TimeSpan timeZoneOffset;
-    private readonly int offsetDays;
-
-    public MakeDailyTimelapseFunction(
-        IOptionsMonitor<ExecutionContextOptions> executionContextOptions
+public class MakeDailyTimelapseFunction(
+    IOptionsMonitor<ExecutionContextOptions> executionContextOptions
         , IConfiguration configuration
         , ILogger<MakeDailyTimelapseFunction> logger)
-    {
-        _logger = logger;
-        ffmpgPath = Path.Combine(executionContextOptions.CurrentValue.AppDirectory, "ffmpeg", "ffmpeg.exe");
-        timeZoneOffset = configuration.GetValue<TimeSpan>("TimeZoneOffset");
-        offsetDays = configuration.GetValue<int>("OffsetDays");
-    }
+{
+    private readonly string ffmpgPath = Path.Combine(executionContextOptions.CurrentValue.AppDirectory, "ffmpeg", "ffmpeg.exe");
+    private readonly TimeSpan timeZoneOffset = configuration.GetValue<TimeSpan>("TimeZoneOffset");
+    public int OffsetDays { get; set; } = configuration.GetValue<int>("OffsetDays");
 
     [FunctionName(nameof(MakeDailyTimelapseFunction))]
     public async Task Run(
         [TimerTrigger("0 30 15 * * *"
 #if DEBUG
-        , RunOnStartup = true
+        , RunOnStartup = false
 #endif
         )] TimerInfo myTimer,
         [Blob("snapshots",FileAccess.Read,Connection = "StorageConnectionString")]
@@ -48,15 +39,15 @@ public class MakeDailyTimelapseFunction
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("D"));
         Directory.CreateDirectory(tempDir);
-        _logger.LogInformation("TempDir:{TempDir}", tempDir);
+        logger.LogInformation("TempDir:{TempDir}", tempDir);
 
-        var targetDate = DateTimeOffset.UtcNow.Add(timeZoneOffset).Date.AddDays(-1).AddDays(offsetDays);
+        var targetDate = DateTimeOffset.UtcNow.Add(timeZoneOffset).Date.AddDays(-1).AddDays(OffsetDays);
         var start = new DateTimeOffset(targetDate, timeZoneOffset);
         var end = new DateTimeOffset(targetDate.AddDays(1), timeZoneOffset);
 
-        _logger.LogInformation("Target:{Target}", targetDate);
-        _logger.LogInformation("Start:{Start}", start);
-        _logger.LogInformation("End:{End}", end);
+        logger.LogInformation("Target:{Target}", targetDate);
+        logger.LogInformation("Start:{Start}", start);
+        logger.LogInformation("End:{End}", end);
 
         var inputListFilePath = await DownloadSnapshotsAndMakeInputFileListAsync(tempDir, start, end, snapshotsBlobContainerClient);
 
@@ -79,7 +70,7 @@ public class MakeDailyTimelapseFunction
         while (current < end)
         {
             var resultSegment = snapshotsBlobContainerClient.GetBlobsAsync(prefix: $"{current.ToUniversalTime():yyyy/MM/dd/yyyy-MM-ddTHH}").AsPages();
-            List<string> blobs = new();
+            List<string> blobs = [];
             await foreach (Page<BlobItem> blobPage in resultSegment)
             {
                 blobs.AddRange(blobPage.Values.Select(x => x.Name));
@@ -92,7 +83,7 @@ public class MakeDailyTimelapseFunction
                 await blobClient.DownloadToAsync(localPath);
                 inputListFileWriter.WriteLine($"file {localPath.Replace("\\", "\\\\")}");
 
-                _logger.LogInformation($"{{Index}},{{BlobPath}},{{LocalPath}}", fileIndex, blob, localPath);
+                logger.LogInformation($"{{Index}},{{BlobPath}},{{LocalPath}}", fileIndex, blob, localPath);
             }
             current = current.AddHours(1);
         }
@@ -120,11 +111,11 @@ public class MakeDailyTimelapseFunction
         };
         process.OutputDataReceived += (sender, e) =>
         {
-            _logger.LogInformation("Output:{Message}", e.Data);
+            logger.LogInformation("Output:{Message}", e.Data);
         };
         process.ErrorDataReceived += (sender, e) =>
         {
-            _logger.LogInformation("Error:{Message}", e.Data);
+            logger.LogInformation("Error:{Message}", e.Data);
         };
         process.Start();
         process.BeginOutputReadLine();
@@ -144,7 +135,7 @@ public class MakeDailyTimelapseFunction
         , string filePath)
     {
         var blobPath = $"{targetDate:yyyyMMdd}.mp4";
-        _logger.LogInformation($"{nameof(UploadTimelapseAsync)} {{FilePath}},{{BlobPath}}", filePath, blobPath);
+        logger.LogInformation($"{nameof(UploadTimelapseAsync)} {{FilePath}},{{BlobPath}}", filePath, blobPath);
         using var fileStream = File.OpenRead(filePath);
         var client = timelapsesBlobContainerClient.GetBlobClient(blobPath);
         await client.UploadAsync(fileStream, overwrite: true);
