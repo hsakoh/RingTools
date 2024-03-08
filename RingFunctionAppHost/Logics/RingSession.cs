@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Web;
@@ -36,6 +37,8 @@ public class RingSession(HttpClient httpClient, ILogger<RingSession> logger)
             };
             request.Headers.Add("2fa-support", "true");
             request.Headers.Add("2fa-code", twoFactorAuthenticationCode);
+            request.Headers.Add("hardware_id", "f1f3998a-aa33-4ea9-86eb-d5d12e0ec26e");
+            request.Headers.TryAddWithoutValidation("User-Agent", "android:com.ringapp");
             using var response = await httpClient.SendAsync(request);
             var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
             logger.LogInformation($"{nameof(AuthenticationAsync)} {{ResponseText}}", responseText);
@@ -90,6 +93,10 @@ public class RingSession(HttpClient httpClient, ILogger<RingSession> logger)
                     }
                 )
             };
+            request.Headers.Add("2fa-support", "true");
+            request.Headers.Add("2fa-code", "");
+            request.Headers.Add("hardware_id", "f1f3998a-aa33-4ea9-86eb-d5d12e0ec26e");
+            request.Headers.TryAddWithoutValidation("User-Agent", "android:com.ringapp");
             using var response = await httpClient.SendAsync(request);
             var responseText = await response.EnsureSuccessStatusCode().Content.ReadAsStringAsync();
             logger.LogInformation($"{nameof(RefreshSessionAsync)} {{ResponseText}}", responseText);
